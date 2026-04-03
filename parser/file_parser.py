@@ -6,10 +6,11 @@ from typing import Dict, List, Optional
 from parser.repo_cloner import should_skip_dir
 
 
-SUPPORTED_EXTENSIONS = {".html", ".js", ".jsx", ".ts", ".tsx", ".css"}
+SUPPORTED_EXTENSIONS = {".html", ".js", ".jsx", ".ts", ".tsx", ".css", ".py"}
 ELEMENT_PATTERN = re.compile(r"<(?P<tag>[a-zA-Z][a-zA-Z0-9]*)\s*(?P<attrs>[^>]*)>(?P<body>.*?)</\1>", re.DOTALL)
 ATTR_PATTERN = re.compile(r'([a-zA-Z_:][a-zA-Z0-9_:.-]*)\s*=\s*["\']([^"\']+)["\']')
 FUNC_COMPONENT_PATTERN = re.compile(r"(?:function|const)\s+([A-Z][A-Za-z0-9_]*)")
+PYTHON_UI_PATTERN = re.compile(r"(st\.|tk\.|wx\.|qt\.)\w+\([^)]*[\"']([^\"']+)[\"'][^)]*\)", re.IGNORECASE)
 
 
 @dataclass
@@ -120,6 +121,34 @@ def parse_file(file_path: str, repo_root: str) -> List[Dict]:
             snippet=match.group(0)[:1200],
         )
         chunks.append(chunk.to_dict())
+
+    # Parse Python UI elements
+    if os.path.splitext(file_path)[1].lower() == ".py":
+        for match in PYTHON_UI_PATTERN.finditer(content):
+            ui_text = match.group(2)
+            if not ui_text:
+                continue
+
+            start_idx = match.start()
+            line_start = _approx_line_number(content, start_idx)
+            line_end = _approx_line_number(content, match.end())
+            nearby = _extract_nearby_texts(content, start_idx)
+
+            chunk = ParsedChunk(
+                text=ui_text,
+                tag="python_ui",
+                file=rel_path,
+                line_start=line_start,
+                line_end=line_end,
+                component=component_name,
+                class_name="",
+                element_id="",
+                aria_label="",
+                placeholder="",
+                nearby_text=nearby,
+                snippet=match.group(0)[:1200],
+            )
+            chunks.append(chunk.to_dict())
 
     return chunks
 
