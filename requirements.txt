@@ -1,0 +1,10 @@
+streamlit
+streamlit-drawable-canvas
+python-dotenv
+GitPython
+rapidfuzz
+pytesseract
+opencv-python-headless
+Pillow
+numpy
+groq
