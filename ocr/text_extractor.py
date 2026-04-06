@@ -1,6 +1,6 @@
 import re
 from collections import Counter
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
@@ -67,6 +67,46 @@ def _extract_tokens_with_conf(img: np.ndarray, conf_threshold: float = 0.40) -> 
     return tokens
 
 
+def _extract_tokens_and_lines(img: np.ndarray, conf_threshold: float = 0.40) -> Tuple[List[str], List[Tuple[str, float]]]:
+    data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT, config="--oem 3 --psm 6")
+    tokens: List[str] = []
+    line_map: Dict[Tuple[int, int, int], List[Tuple[int, str, float]]] = {}
+    n = len(data.get("text", []))
+    for i in range(n):
+        raw = data["text"][i] or ""
+        conf_raw = data["conf"][i]
+        try:
+            conf = max(0.0, float(conf_raw)) / 100.0
+        except Exception:
+            conf = 0.0
+
+        token = _clean_token(raw)
+        if conf < conf_threshold or not _valid_token(token):
+            continue
+
+        tokens.append(token)
+        key = (
+            int(data.get("block_num", [0] * n)[i]),
+            int(data.get("par_num", [0] * n)[i]),
+            int(data.get("line_num", [0] * n)[i]),
+        )
+        left = int(data.get("left", [0] * n)[i])
+        line_map.setdefault(key, []).append((left, token, conf))
+
+    line_candidates: List[Tuple[str, float]] = []
+    for items in line_map.values():
+        ordered = sorted(items, key=lambda item: item[0])
+        words = [token for _, token, _ in ordered]
+        if not words:
+            continue
+        phrase = " ".join(words).strip()
+        avg_conf = sum(conf for _, _, conf in ordered) / max(len(ordered), 1)
+        if phrase:
+            line_candidates.append((phrase, avg_conf))
+
+    return tokens, line_candidates
+
+
 def _majority_merge(pass_texts: List[str]) -> str:
     if not pass_texts:
         return ""
@@ -87,18 +127,52 @@ def _majority_merge(pass_texts: List[str]) -> str:
     return best
 
 
+def _phrase_quality(text: str, confidence: float) -> float:
+    words = [word for word in text.split() if word]
+    word_bonus = min(len(words), 5) * 0.18
+    length_bonus = min(len(text), 48) / 120.0
+    return confidence + word_bonus + length_bonus
+
+
+def _select_best_phrase(candidates: List[Tuple[str, float]]) -> str:
+    if not candidates:
+        return ""
+
+    merged_scores: Dict[str, float] = {}
+    original_texts: Dict[str, str] = {}
+    for text, confidence in candidates:
+        normalized = re.sub(r"\s+", " ", text).strip().lower()
+        if not normalized:
+            continue
+        score = _phrase_quality(text, confidence)
+        merged_scores[normalized] = merged_scores.get(normalized, 0.0) + score
+        existing = original_texts.get(normalized, "")
+        if len(text) > len(existing):
+            original_texts[normalized] = text
+
+    if not merged_scores:
+        return ""
+
+    best_key = max(merged_scores, key=merged_scores.get)
+    return original_texts[best_key]
+
+
 def run_ocr_multistage(img: np.ndarray, conf_threshold: float = 0.40) -> Tuple[str, List[str]]:
     variants = preprocess_variants(img)
-    candidate_texts: List[str] = []
+    phrase_candidates: List[Tuple[str, float]] = []
+    fallback_candidate_texts: List[str] = []
     all_tokens: List[str] = []
     for variant in variants:
-        tokens = _extract_tokens_with_conf(variant, conf_threshold=conf_threshold)
+        tokens, line_candidates = _extract_tokens_and_lines(variant, conf_threshold=conf_threshold)
         if tokens:
-            joined = " ".join(tokens)
-            candidate_texts.append(joined)
             all_tokens.extend(tokens)
+            phrase_candidates.extend(line_candidates)
+            fallback_candidate_texts.append(" ".join(tokens))
 
-    main_text = _majority_merge(candidate_texts)
+    main_text = _select_best_phrase(phrase_candidates)
+    if not main_text:
+        main_text = _majority_merge(fallback_candidate_texts)
+
     nearby_unique = []
     seen = set()
     for token in all_tokens:

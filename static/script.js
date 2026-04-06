@@ -24,6 +24,15 @@ const ocrResults = document.getElementById('ocrResults');
 const matchResults = document.getElementById('matchResults');
 const explanation = document.getElementById('explanation');
 const indexStatus = document.getElementById('indexStatus');
+const relatedFilesSection = document.getElementById('relatedFilesSection');
+const toggleRelatedFiles = document.getElementById('toggleRelatedFiles');
+const relatedFilesContent = document.getElementById('relatedFilesContent');
+const relatedFilesList = document.getElementById('relatedFilesList');
+const navigationSummary = document.getElementById('navigationSummary');
+const navigationPrimary = document.getElementById('navigationPrimary');
+const navigationBehavior = document.getElementById('navigationBehavior');
+const navigationStyling = document.getElementById('navigationStyling');
+const explanationText = document.getElementById('explanationText');
 
 // Utility functions
 function showMessage(element, message, type = 'info') {
@@ -34,6 +43,15 @@ function showMessage(element, message, type = 'info') {
 
 function hideMessage(element) {
     element.style.display = 'none';
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function getEventPos(e, element) {
@@ -264,6 +282,8 @@ processBtn.addEventListener('click', async () => {
     ocrResults.style.display = 'none';
     matchResults.style.display = 'none';
     explanation.style.display = 'none';
+    relatedFilesSection.style.display = 'none';
+    relatedFilesContent.style.display = 'none';
     
     try {
         // Calculate actual coordinates
@@ -301,13 +321,10 @@ processBtn.addEventListener('click', async () => {
             if (data.matches && data.matches.length > 0) {
                 displayMatches(data.matches);
                 matchResults.style.display = 'block';
-                
-                // Show explanation
-                if (data.explanation) {
-                    document.getElementById('explanationText').innerHTML = data.explanation.replace(/\n/g, '<br>');
-                    explanation.style.display = 'block';
-                }
             }
+
+            renderNavigation(data.navigation || null, data.explanation || '');
+            renderRelatedFiles(data.related_files || []);
             
             showMessage(repoStatus, data.message, data.matches.length > 0 ? 'success' : 'info');
         } else {
@@ -329,22 +346,100 @@ function displayMatches(matches) {
     matches.forEach((match, index) => {
         const matchDiv = document.createElement('div');
         matchDiv.className = 'match-item';
+        const reasons = (match.match_reasons || []).map((reason) => escapeHtml(reason)).join(', ');
+        const exactLineStart = match.exact_line_start || match.line_start || '?';
+        const exactLineEnd = match.exact_line_end || match.line_end || '?';
+        const lineLabel = exactLineStart === exactLineEnd ? `${exactLineStart}` : `${exactLineStart}-${exactLineEnd}`;
         
         matchDiv.innerHTML = `
             <div class="match-header">
-                Match ${index + 1}: ${match.component || 'Unknown'} (${match.score_pct || 0}% confidence)
+                Match ${index + 1}: ${escapeHtml(match.component || 'Unknown')} (${match.score_pct || 0}% confidence)
             </div>
             <div class="match-details">
-                <strong>File:</strong> ${match.file || 'N/A'}<br>
-                <strong>Lines:</strong> ${match.line_start || '?'}-${match.line_end || '?'}<br>
-                <strong>Tag:</strong> ${match.tag || 'N/A'}
+                <strong>File:</strong> ${escapeHtml(match.file || 'N/A')}<br>
+                <strong>Matched line:</strong> ${lineLabel}<br>
+                <strong>Chunk range:</strong> ${match.line_start || '?'}-${match.line_end || '?'}<br>
+                <strong>Tag:</strong> ${escapeHtml(match.tag || 'N/A')}<br>
+                <strong>Why matched:</strong> ${reasons || 'Partial textual match'}
             </div>
-            <div class="match-code">${match.snippet || 'No code snippet available'}</div>
+            <div class="match-excerpt-label"><strong>Matched code:</strong></div>
+            <pre class="match-code">${escapeHtml(match.matched_excerpt || 'No matched code excerpt available')}</pre>
         `;
         
         matchesList.appendChild(matchDiv);
     });
 }
+
+function renderRelatedFiles(files) {
+    relatedFilesList.innerHTML = '';
+    if (!files || files.length === 0) {
+        relatedFilesSection.style.display = 'none';
+        relatedFilesContent.style.display = 'none';
+        return;
+    }
+
+    files.forEach((file) => {
+        const item = document.createElement('li');
+        item.textContent = file;
+        relatedFilesList.appendChild(item);
+    });
+
+    toggleRelatedFiles.textContent = 'Show Related Files';
+    relatedFilesContent.style.display = 'none';
+    relatedFilesSection.style.display = 'block';
+}
+
+function renderReferenceSection(container, title, references) {
+    if (!references || references.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const items = references.map((ref) => `
+        <div class="nav-ref-item">
+            <div><strong>${escapeHtml(ref.label || title)}:</strong> ${escapeHtml(ref.file || 'N/A')}${ref.line ? `:${ref.line}` : ''}</div>
+            <pre class="match-code">${escapeHtml(ref.code || '')}</pre>
+        </div>
+    `).join('');
+
+    container.innerHTML = `<h4>${escapeHtml(title)}</h4>${items}`;
+}
+
+function renderNavigation(navigation, explanationTextValue) {
+    navigationSummary.innerHTML = '';
+    navigationPrimary.innerHTML = '';
+    navigationBehavior.innerHTML = '';
+    navigationStyling.innerHTML = '';
+    explanationText.innerHTML = '';
+
+    if (!navigation || !navigation.primary) {
+        if (explanationTextValue) {
+            explanationText.innerHTML = escapeHtml(explanationTextValue).replace(/\n/g, '<br>');
+        }
+        explanation.style.display = explanationTextValue ? 'block' : 'none';
+        return;
+    }
+
+    if (navigation.summary) {
+        navigationSummary.innerHTML = `<p><strong>Summary:</strong> ${escapeHtml(navigation.summary)}</p>`;
+    }
+
+    renderReferenceSection(navigationPrimary, 'Primary Match', [navigation.primary]);
+    renderReferenceSection(navigationBehavior, 'Behavior', navigation.behavior || []);
+    renderReferenceSection(navigationStyling, 'Styling', navigation.styling || []);
+
+    if (explanationTextValue) {
+        explanationText.innerHTML = `<h4>Notes</h4><p>${escapeHtml(explanationTextValue).replace(/\n/g, '<br>')}</p>`;
+    }
+
+    explanation.style.display = 'block';
+}
+
+toggleRelatedFiles.addEventListener('click', () => {
+    const isVisible = relatedFilesContent.style.display === 'block';
+    relatedFilesContent.style.display = isVisible ? 'none' : 'block';
+    toggleRelatedFiles.textContent = isVisible ? 'Show Related Files' : 'Hide Related Files';
+});
 
 async function updateStatus() {
     try {

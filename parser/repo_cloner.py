@@ -20,7 +20,7 @@ def _is_valid_github_url(repo_url: str) -> bool:
 
 def clone_repo(repo_url: str) -> Tuple[str, str]:
     """
-    Clone a GitHub repository into a temporary directory.
+    Clone a GitHub repository into a temporary directory with retry logic.
     Returns:
       (repo_root_path, temp_dir_path)
     """
@@ -30,12 +30,25 @@ def clone_repo(repo_url: str) -> Tuple[str, str]:
     temp_dir = tempfile.mkdtemp(prefix="vision_nav_repo_")
     repo_dir = os.path.join(temp_dir, "repo")
 
-    try:
-        Repo.clone_from(repo_url, repo_dir, depth=1)
-        return repo_dir, temp_dir
-    except GitCommandError as exc:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        raise RuntimeError(f"Failed to clone repository: {exc}") from exc
+    # Retry logic for network issues
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            print(f"Cloning attempt {attempt + 1}/{max_retries}: {repo_url}")
+            Repo.clone_from(repo_url, repo_dir, depth=1)
+            print(f"Successfully cloned repository to {repo_dir}")
+            return repo_dir, temp_dir
+        except GitCommandError as exc:
+            print(f"Clone attempt {attempt + 1} failed: {exc}")
+            if attempt == max_retries - 1:
+                # Last attempt failed, cleanup and raise
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                raise RuntimeError(f"Failed to clone repository after {max_retries} attempts: {exc}") from exc
+            else:
+                # Wait before retry
+                import time
+                time.sleep(2)
+                continue
 
 
 def should_skip_dir(dir_name: str) -> bool:
