@@ -14,6 +14,7 @@ from matcher.scoring import (
     text_similarity,
     token_overlap_score,
 )
+from matcher.fuzzy_inference import fuzzy_match_confidence
 
 
 def _extract_match_excerpt(element_snippet: str, snippet: str, query_text: str, chunk_text: str) -> str:
@@ -97,7 +98,7 @@ def match_chunks(ocr_text: str, ocr_nearby: List[str], index: List[Dict], top_k:
             exact_match=exact_match_bonus > 0,
         )
         effective_penalty = max(0.0, query_penalty - (0.08 if effective_nearby_sim > 0.45 else 0.0))
-        score = final_score(
+        heuristic_score = final_score(
             text_sim=text_sim,
             search_sim=search_sim,
             nearby_sim=effective_nearby_sim,
@@ -110,6 +111,20 @@ def match_chunks(ocr_text: str, ocr_nearby: List[str], index: List[Dict], top_k:
             specificity_bonus=specificity_bonus,
             container_penalty=container_penalty,
         )
+        fuzzy_result = fuzzy_match_confidence(
+            text_sim=text_sim,
+            search_sim=search_sim,
+            nearby_sim=effective_nearby_sim,
+            token_overlap=overlap_sim,
+            tag_sim=tag_sim,
+            exact_match_bonus=exact_match_bonus,
+            generic_penalty=effective_penalty,
+            support_penalty=support_penalty,
+            container_penalty=container_penalty,
+            specificity_bonus=specificity_bonus,
+            source_bonus=source_bonus,
+        )
+        score = (0.75 * heuristic_score) + (0.25 * fuzzy_result["score"])
 
         # If the element itself does not meaningfully resemble the OCR text,
         # treat broader parent/context matches as weak evidence.
@@ -156,6 +171,10 @@ def match_chunks(ocr_text: str, ocr_nearby: List[str], index: List[Dict], top_k:
         scored = dict(chunk)
         scored["score"] = score
         scored["score_pct"] = round(score * 100, 2)
+        scored["heuristic_score"] = round(heuristic_score, 4)
+        scored["fuzzy_score"] = fuzzy_result["score"]
+        scored["fuzzy_label"] = fuzzy_result["label"]
+        scored["fuzzy_rules"] = fuzzy_result["rule_strengths"]
         scored["text_similarity"] = round(text_sim, 3)
         scored["element_text_similarity"] = round(element_text_sim, 3)
         scored["search_similarity"] = round(search_sim, 3)
@@ -178,6 +197,8 @@ def match_chunks(ocr_text: str, ocr_nearby: List[str], index: List[Dict], top_k:
         grouped["evidence_count"] += 1
         grouped["score"] = min(1.0, max(grouped["score"], score) + 0.04)
         grouped["score_pct"] = round(grouped["score"] * 100, 2)
+        grouped["heuristic_score"] = max(grouped.get("heuristic_score", 0), round(heuristic_score, 4))
+        grouped["fuzzy_score"] = max(grouped.get("fuzzy_score", 0), fuzzy_result["score"])
         grouped["text_similarity"] = max(grouped["text_similarity"], round(text_sim, 3))
         grouped["element_text_similarity"] = max(grouped["element_text_similarity"], round(element_text_sim, 3))
         grouped["search_similarity"] = max(grouped["search_similarity"], round(search_sim, 3))
@@ -209,6 +230,8 @@ def match_chunks(ocr_text: str, ocr_nearby: List[str], index: List[Dict], top_k:
                 "placeholder",
             ):
                 grouped[field] = chunk.get(field, grouped.get(field))
+            grouped["fuzzy_label"] = fuzzy_result["label"]
+            grouped["fuzzy_rules"] = fuzzy_result["rule_strengths"]
             grouped["_best_chunk_score"] = score
 
     results = list(grouped_results.values())

@@ -347,9 +347,30 @@ function displayMatches(matches) {
         const matchDiv = document.createElement('div');
         matchDiv.className = 'match-item';
         const reasons = (match.match_reasons || []).map((reason) => escapeHtml(reason)).join(', ');
+        const fuzzyRules = (match.fuzzy_rules || [])
+            .map((item) => {
+                const ruleName = escapeHtml((item.rule || '').replace(/_/g, ' '));
+                const ruleStrength = typeof item.strength === 'number' ? item.strength.toFixed(2) : item.strength;
+                return `<span class="fuzzy-rule">${ruleName} (${escapeHtml(ruleStrength)})</span>`;
+            })
+            .join('');
         const exactLineStart = match.exact_line_start || match.line_start || '?';
         const exactLineEnd = match.exact_line_end || match.line_end || '?';
         const lineLabel = exactLineStart === exactLineEnd ? `${exactLineStart}` : `${exactLineStart}-${exactLineEnd}`;
+        const fuzzySummary = `
+            <div class="fuzzy-summary">
+                <div class="fuzzy-summary-title">Fuzzy Logic Summary</div>
+                <div class="fuzzy-metrics">
+                    <span class="fuzzy-badge fuzzy-${String(match.fuzzy_label || 'Unknown').toLowerCase()}">
+                        ${escapeHtml(match.fuzzy_label || 'Unknown')}
+                    </span>
+                    <span><strong>Final:</strong> ${escapeHtml(match.score_pct || 0)}%</span>
+                    <span><strong>Heuristic:</strong> ${escapeHtml(match.heuristic_score ?? 'N/A')}</span>
+                    <span><strong>Fuzzy:</strong> ${escapeHtml(match.fuzzy_score ?? 'N/A')}</span>
+                </div>
+                ${fuzzyRules ? `<div class="fuzzy-rules"><strong>Top Rules:</strong> ${fuzzyRules}</div>` : ''}
+            </div>
+        `;
         
         matchDiv.innerHTML = `
             <div class="match-header">
@@ -362,6 +383,7 @@ function displayMatches(matches) {
                 <strong>Tag:</strong> ${escapeHtml(match.tag || 'N/A')}<br>
                 <strong>Why matched:</strong> ${reasons || 'Partial textual match'}
             </div>
+            ${fuzzySummary}
             <div class="match-excerpt-label"><strong>Matched code:</strong></div>
             <pre class="match-code">${escapeHtml(match.matched_excerpt || 'No matched code excerpt available')}</pre>
         `;
